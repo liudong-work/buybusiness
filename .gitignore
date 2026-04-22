@@ -1,0 +1,9 @@
+node_modules/
+.next/
+.restore-check/
+
+.next-stale-*/
+.next.bak.*/
+
+.DS_Store
+*.log
