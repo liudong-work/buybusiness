@@ -7,3 +7,9 @@ node_modules/
 
 .DS_Store
 *.log
+
+# Seller admin local artifacts
+admin-system/backend/.venv/
+admin-system/backend/app/__pycache__/
+admin-system/backend/storage/*.sqlite3
+admin-system/frontend/dist/
