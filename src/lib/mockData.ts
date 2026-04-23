@@ -69,20 +69,6 @@ export const mockProducts: Product[] = [
     inStock: true,
     rating: 4.9,
     reviewCount: 89
-  },
-  {
-    id: '3',
-    name: 'Modern Everyday Tote',
-    description: 'Lightweight canvas tote designed for boutique retail shelves',
-    price: 42.5,
-    images: ['/products/tote-1.jpg', '/products/tote-2.jpg'],
-    brandId: '3',
-    category: 'Women',
-    tags: ['fashion', 'everyday', 'boutique'],
-    minOrderQuantity: 10,
-    inStock: true,
-    rating: 4.7,
-    reviewCount: 63
   }
 ];
 
@@ -103,21 +89,9 @@ export const valueTags = [
   'Black Owned',
   'Latino Owned',
   'LGBTQI+ Owned',
-  'Eco-Friendly',
+  'Eco-friendly',
   'Organic',
   'Handmade',
   'Not on Amazon',
   'Gives back'
 ];
-
-export function getBrandById(id: string) {
-  return mockBrands.find((brand) => brand.id === id);
-}
-
-export function getProductById(id: string) {
-  return mockProducts.find((product) => product.id === id);
-}
-
-export function getProductsByBrandId(brandId: string) {
-  return mockProducts.filter((product) => product.brandId === brandId);
-}
