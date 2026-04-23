@@ -1,8 +1,12 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowRight, BadgeCheck, Building2, MapPin, Package, Star, Tags } from 'lucide-react';
 import { getBrandById, getProductsByBrandId } from '@/lib/mockData';
+import { CompareBrandButton } from '@/components/site/CompareBrandButton';
+import { FavoriteBrandButton } from '@/components/site/FavoriteBrandButton';
+import { trackRecentView } from '@/lib/recentViews';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
@@ -17,6 +21,12 @@ interface BrandPageProps {
 export default function BrandDetailPage({ params }: BrandPageProps) {
   const brand = getBrandById(params.id);
   const brandProducts = getProductsByBrandId(params.id);
+
+  useEffect(() => {
+    if (brand) {
+      trackRecentView('brand', brand.id);
+    }
+  }, [brand]);
 
   if (!brand) {
     return (
@@ -62,9 +72,11 @@ export default function BrandDetailPage({ params }: BrandPageProps) {
         ]}
         actions={
           <>
-            <Link href="/contact" className="brand-button-primary">
-              联系平台顾问
+            <Link href={`/request-quote?source=brand&brandId=${brand.id}`} className="brand-button-primary">
+              发起品牌询盘
             </Link>
+            <FavoriteBrandButton brandId={brand.id} />
+            <CompareBrandButton brandId={brand.id} />
             <Link href={`/brands?category=${encodeURIComponent(brand.category)}`} className="brand-button-secondary">
               查看同类供应商
             </Link>
@@ -113,6 +125,10 @@ export default function BrandDetailPage({ params }: BrandPageProps) {
                     {value}
                   </span>
                 ))}
+              </div>
+
+              <div className="mt-8 rounded-[1.6rem] bg-[#fff7ed] p-4 text-sm leading-6 text-gray-600">
+                收藏品牌后，可以在工作台和收藏页里快速回到这里继续比较供应商与商品目录。
               </div>
             </div>
           </Reveal>
@@ -188,6 +204,12 @@ export default function BrandDetailPage({ params }: BrandPageProps) {
                     查看代表商品 <ArrowRight className="ml-2 h-4 w-4" />
                   </Link>
                 ) : null}
+                <Link
+                  href={`/request-quote?source=brand&brandId=${brand.id}`}
+                  className="brand-button-secondary bg-white/10 text-white border-white/12 hover:bg-white/15"
+                >
+                  发起询盘
+                </Link>
                 <Link href="/brands" className="brand-button-secondary bg-white/10 text-white border-white/12 hover:bg-white/15">
                   返回供应商列表
                 </Link>

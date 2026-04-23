@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { getCartItemCount, subscribeCartUpdates } from '@/lib/cart';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { LanguageSwitch } from '@/components/site/LanguageSwitch';
 
@@ -13,6 +14,8 @@ const navItems = [
   { zh: '首页', en: 'Home', href: '/' },
   { zh: '供应商', en: 'Brands', href: '/brands' },
   { zh: '分类', en: 'Categories', href: '/categories' },
+  { zh: '买家工作台', en: 'Workspace', href: '/account' },
+  { zh: '我的询盘', en: 'Inquiries', href: '/inquiries' },
   { zh: '关于我们', en: 'About', href: '/about' },
   { zh: '联系我们', en: 'Contact', href: '/contact' },
 ];
@@ -21,11 +24,18 @@ export function SiteNav({ activePath = '' }: SiteNavProps) {
   const { language } = useLanguage();
   const isZh = language === 'zh';
   const [scrollY, setScrollY] = useState(0);
+  const [cartCount, setCartCount] = useState(0);
 
   useEffect(() => {
     const handleScroll = () => setScrollY(window.scrollY);
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const syncCartCount = () => setCartCount(getCartItemCount());
+    syncCartCount();
+    return subscribeCartUpdates(syncCartCount);
   }, []);
 
   return (
@@ -73,7 +83,7 @@ export function SiteNav({ activePath = '' }: SiteNavProps) {
                 );
               })}
               <Link href="/cart" className="text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors">
-                {isZh ? '购物车' : 'Cart'}
+                {isZh ? '购物车' : 'Cart'}{cartCount > 0 ? ` (${cartCount})` : ''}
               </Link>
             </div>
 

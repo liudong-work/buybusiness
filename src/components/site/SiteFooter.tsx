@@ -13,8 +13,14 @@ export function SiteFooter() {
     {
       title: isZh ? '采购商' : 'For Buyers',
       links: [
+        { name: isZh ? '买家工作台' : 'Buyer Workspace', href: '/account' },
+        { name: isZh ? '我的订单' : 'My Orders', href: '/orders' },
+        { name: isZh ? '我的收藏' : 'Favorites', href: '/favorites' },
+        { name: isZh ? '最近浏览' : 'Recently Viewed', href: '/recently-viewed' },
+        { name: isZh ? '对比面板' : 'Compare', href: '/compare' },
         { name: isZh ? '免费注册' : 'Sign Up Free', href: '/signup-simple' },
         { name: isZh ? '浏览供应商' : 'Browse Brands', href: '/brands' },
+        { name: isZh ? '我的询盘' : 'My Inquiries', href: '/inquiries' },
         { name: isZh ? '常见问题' : 'FAQ', href: '/faq' },
       ],
     },
@@ -100,6 +106,9 @@ export function SiteFooter() {
               </Link>
               <Link href="/contact" className="brand-button-secondary text-sm bg-white/10 text-white border-white/12 hover:bg-white/15">
                 {isZh ? '联系顾问' : 'Contact Advisor'}
+              </Link>
+              <Link href="/request-quote" className="brand-button-secondary text-sm bg-white/10 text-white border-white/12 hover:bg-white/15">
+                {isZh ? '发起询盘' : 'Request Quote'}
               </Link>
               <LanguageSwitch theme="dark" />
             </div>

@@ -1,51 +1,39 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { LanguageProvider } from '@/contexts/LanguageContext';
+import { StructuredData } from '@/components/seo/StructuredData';
+import {
+  buildMetadata,
+  buildOrganizationStructuredData,
+  buildWebsiteStructuredData,
+  siteConfig,
+} from '@/lib/seo';
 
 export const metadata: Metadata = {
+  ...buildMetadata({
+    title: 'BuyBusiness Wholesale Marketplace',
+    description: siteConfig.description,
+    path: '/',
+  }),
   title: {
-    default: '外贸批发平台 - 连接中国供应商与全球零售商',
-    template: '%s | 外贸批发平台'
+    default: 'BuyBusiness Wholesale Marketplace',
+    template: '%s | BuyBusiness',
   },
-  description: '发现优质中国供应商，一站式批发采购。支持支付宝、微信支付，提供中文客服和便捷物流。连接全球零售商与中国制造。',
-  keywords: '外贸批发,中国供应商,跨境电商,批发采购,阿里巴巴替代,中国制造,外贸平台',
-  authors: [{ name: '外贸批发平台团队' }],
+  authors: [{ name: 'BuyBusiness Team' }],
   creator: '外贸批发平台',
-  publisher: '外贸批发平台',
+  publisher: 'BuyBusiness',
   formatDetection: {
     email: false,
     address: false,
     telephone: false,
   },
-  metadataBase: new URL('https://china-wholesale.com'),
+  metadataBase: new URL(siteConfig.siteUrl),
   alternates: {
     canonical: '/',
     languages: {
-      'zh-CN': '/zh-CN',
-      'en-US': '/en-US',
+      'zh-CN': '/',
+      'en-US': '/',
     },
-  },
-  openGraph: {
-    type: 'website',
-    locale: 'en_US',
-    url: 'https://faire-clone.com',
-    siteName: 'Faire Clone',
-    title: 'Faire Clone - Global Wholesale Marketplace',
-    description: 'Connect with wholesale suppliers worldwide for your retail business',
-    images: [
-      {
-        url: '/og-image.jpg',
-        width: 1200,
-        height: 630,
-        alt: 'Faire Clone - Global Wholesale Marketplace',
-      },
-    ],
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Faire Clone - Global Wholesale Marketplace',
-    description: 'Connect with wholesale suppliers worldwide',
-    images: ['/og-image.jpg'],
   },
   robots: {
     index: true,
@@ -68,6 +56,8 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="font-sans">
+        <StructuredData data={buildWebsiteStructuredData()} />
+        <StructuredData data={buildOrganizationStructuredData()} />
         <LanguageProvider>
           {children}
         </LanguageProvider>

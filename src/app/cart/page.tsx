@@ -1,60 +1,42 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, Package, ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
+import { getCartDisplayItems, removeStoredCartItem, subscribeCartUpdates, updateStoredCartQuantity } from '@/lib/cart';
+import { serializeInquiryItemsParam } from '@/lib/inquiries';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { SiteNav } from '@/components/site/SiteNav';
-
-type CartItem = {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-  brandHref: string;
-  brand: string;
-  minOrder: number;
-};
+import { type CartDisplayItem } from '@/types';
 
 export default function CartPage() {
-  const [cartItems, setCartItems] = useState<CartItem[]>([
-    {
-      id: '1',
-      name: '手工茶叶精选套装',
-      price: 25.99,
-      quantity: 12,
-      brandHref: '/brands/1',
-      brand: 'Flowerhead Tea',
-      minOrder: 12,
-    },
-    {
-      id: '2',
-      name: '可持续环保木椅',
-      price: 189.99,
-      quantity: 6,
-      brandHref: '/brands/2',
-      brand: 'Tula House',
-      minOrder: 6,
-    },
-  ]);
+  const [cartItems, setCartItems] = useState<CartDisplayItem[]>([]);
+
+  useEffect(() => {
+    const syncCart = () => setCartItems(getCartDisplayItems());
+    syncCart();
+    return subscribeCartUpdates(syncCart);
+  }, []);
 
   const updateQuantity = (id: string, newQuantity: number) => {
-    setCartItems((items) =>
-      items.map((item) =>
-        item.id === id ? { ...item, quantity: Math.max(item.minOrder, newQuantity) } : item
-      )
-    );
+    updateStoredCartQuantity(id, newQuantity);
   };
 
   const removeItem = (id: string) => {
-    setCartItems((items) => items.filter((item) => item.id !== id));
+    removeStoredCartItem(id);
   };
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotal = useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
+    [cartItems]
+  );
   const shipping = subtotal > 250 ? 0 : 25;
   const total = subtotal + shipping;
+  const inquiryItems = serializeInquiryItemsParam(
+    cartItems.map((item) => ({ id: item.productId, quantity: item.quantity }))
+  );
 
   return (
     <div className="site-shell min-h-screen">
@@ -92,7 +74,7 @@ export default function CartPage() {
           <div className="grid gap-8 xl:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-5">
               {cartItems.map((item, index) => (
-                <Reveal key={item.id} delay={index * 70}>
+                <Reveal key={item.productId} delay={index * 70}>
                   <div className="brand-card rounded-[2rem] p-6">
                     <div className="flex flex-col gap-6 md:flex-row md:items-center">
                       <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-500 text-white">
@@ -100,36 +82,38 @@ export default function CartPage() {
                       </div>
 
                       <div className="min-w-0 flex-1">
-                        <h3 className="text-xl font-semibold text-gray-950">{item.name}</h3>
-                        <Link href={item.brandHref} className="mt-2 inline-flex text-sm font-medium text-blue-700">
-                          {item.brand}
+                        <h3 className="text-xl font-semibold text-gray-950">{item.product.name}</h3>
+                        <Link href={`/brands/${item.brand.id}`} className="mt-2 inline-flex text-sm font-medium text-blue-700">
+                          {item.brand.name}
                         </Link>
                         <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-500">
-                          <span>单价 ${item.price}</span>
-                          <span>MOQ {item.minOrder}</span>
+                          <span>单价 ${item.product.price}</span>
+                          <span>MOQ {item.product.minOrderQuantity}</span>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-4 md:flex-col md:items-end">
                         <div className="inline-flex items-center rounded-2xl border border-gray-200 bg-white">
                           <button
-                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                            onClick={() => updateQuantity(item.productId, item.quantity - 1)}
                             className="px-4 py-3 text-gray-500 transition-colors hover:text-gray-900"
                           >
                             -
                           </button>
                           <span className="min-w-[60px] px-3 text-center font-semibold text-gray-950">{item.quantity}</span>
                           <button
-                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                            onClick={() => updateQuantity(item.productId, item.quantity + 1)}
                             className="px-4 py-3 text-gray-500 transition-colors hover:text-gray-900"
                           >
                             +
                           </button>
                         </div>
                         <div className="text-right">
-                          <div className="text-xl font-semibold text-gray-950">${(item.price * item.quantity).toFixed(2)}</div>
+                          <div className="text-xl font-semibold text-gray-950">
+                            ${(item.product.price * item.quantity).toFixed(2)}
+                          </div>
                           <button
-                            onClick={() => removeItem(item.id)}
+                            onClick={() => removeItem(item.productId)}
                             className="mt-2 text-sm font-semibold text-red-600 hover:text-red-500"
                           >
                             删除
@@ -171,9 +155,17 @@ export default function CartPage() {
                   </div>
                 </div>
 
-                <button className="brand-button-primary mt-8 w-full">
-                  去结算 <ArrowRight className="ml-2 h-4 w-4" />
-                </button>
+                <div className="mt-8 grid gap-3">
+                  <Link href="/checkout" className="brand-button-primary w-full">
+                    去结算 <ArrowRight className="ml-2 h-4 w-4" />
+                  </Link>
+                  <Link
+                    href={`/request-quote?source=cart&items=${encodeURIComponent(inquiryItems)}`}
+                    className="brand-button-secondary w-full"
+                  >
+                    整单申请报价
+                  </Link>
+                </div>
 
                 <div className="mt-8 grid gap-3">
                   <div className="rounded-2xl border border-gray-100 bg-white p-4 text-sm text-gray-600">
