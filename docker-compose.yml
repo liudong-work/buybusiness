@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  wholesale-web:
+    build: .
+    container_name: wholesale-web
+    restart: always
+    ports:
+      - "3003:3000"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - wholesale-network
+
+networks:
+  wholesale-network:
+    driver: bridge
