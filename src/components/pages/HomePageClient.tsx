@@ -610,11 +610,9 @@ export default function HomePageClient() {
             <div className="mt-4 flex items-center space-x-6 md:mt-0">
               <span className="text-sm text-gray-400">{t('footerPaymentMethods')}：</span>
               <div className="flex space-x-3">
-                {[t('alipay'), t('wechat'), t('unionpay')].map((item) => (
-                  <span key={item} className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-400">
-                    {item}
-                  </span>
-                ))}
+                <span className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-400">
+                  {t('paypal')}
+                </span>
               </div>
             </div>
           </div>

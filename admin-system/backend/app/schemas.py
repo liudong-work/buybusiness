@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 from typing_extensions import Literal
@@ -9,6 +9,8 @@ MemberStatus = Literal["active", "invited", "disabled"]
 ProductStatus = Literal["active", "draft", "low_stock"]
 OrderStatus = Literal["submitted", "processing", "ready_to_ship", "completed", "exception"]
 InquiryStatus = Literal["new", "follow_up", "quoted", "converted"]
+BuyerInquirySource = Literal["product", "brand", "cart", "general"]
+BuyerInquiryStatus = Literal["submitted", "reviewing", "quoted", "closed"]
 
 
 class DashboardMetric(BaseModel):
@@ -148,6 +150,9 @@ class InquiryRecord(BaseModel):
 
 
 class InquiryItem(BaseModel):
+    productId: str = ""
+    brandId: str = ""
+    brandName: str = ""
     productName: str
     quantity: int
     moq: int
@@ -197,12 +202,19 @@ class InquiryDetail(InquiryRecord):
     email: str
     destination: str
     owner: str
+    buyerRole: str = ""
     targetPrice: str
     needSample: bool
     items: List[InquiryItem]
     activities: List[InquiryActivity]
     internalNotes: List[InquiryNote]
     quotes: List[InquiryQuote]
+    buyerAccountId: str = ""
+    source: BuyerInquirySource = "general"
+    brandId: str = ""
+    brandName: str = ""
+    productId: str = ""
+    productName: str = ""
 
 
 class InquiryReplyPayload(BaseModel):
@@ -266,6 +278,112 @@ class LoginResponse(BaseModel):
     user: AuthUser
 
 
+class BuyerAccountRecord(BaseModel):
+    id: str
+    email: str
+    contactName: str
+    businessName: str
+    businessType: str
+    phoneNumber: str
+    country: str
+    createdAt: str
+    lastLoginAt: str
+
+
+class BuyerAuthUser(BaseModel):
+    id: str
+    email: str
+    contactName: str
+    businessName: str
+    businessType: str
+    phoneNumber: str
+    country: str
+
+
+class BuyerRegisterPayload(BaseModel):
+    contactName: str
+    email: str
+    password: str
+    businessName: str
+    businessType: str
+    phoneNumber: str
+    country: str
+
+
+class BuyerLoginPayload(BaseModel):
+    email: str
+    password: str
+    deviceName: str = ""
+
+
+class BuyerLoginResponse(BaseModel):
+    accessToken: str
+    user: BuyerAuthUser
+
+
+class BuyerInquiryLineItem(BaseModel):
+    productId: str
+    productName: str
+    brandId: str
+    brandName: str
+    quantity: int
+    minOrderQuantity: int
+    unitPrice: float
+
+
+class BuyerInquiryActivity(BaseModel):
+    id: str
+    createdAt: str
+    type: Literal["created", "buyer_follow_up", "advisor_update", "status_change"]
+    author: Literal["buyer", "advisor", "system"]
+    title: str
+    message: str
+    status: Optional[BuyerInquiryStatus] = None
+
+
+class BuyerInquiryRecord(BaseModel):
+    id: str
+    createdAt: str
+    updatedAt: str
+    status: BuyerInquiryStatus
+    source: BuyerInquirySource
+    buyerName: str
+    email: str
+    company: str
+    role: str
+    destinationCountry: str
+    targetPrice: str
+    needSample: bool
+    message: str
+    brandId: str = ""
+    brandName: str = ""
+    productId: str = ""
+    productName: str = ""
+    items: List[BuyerInquiryLineItem]
+    activities: List[BuyerInquiryActivity]
+    lastFollowUpAt: Optional[str] = None
+
+
+class BuyerInquiryPayload(BaseModel):
+    source: BuyerInquirySource
+    buyerName: str
+    company: str
+    role: str
+    destinationCountry: str
+    targetPrice: str
+    message: str
+    needSample: bool
+    brandId: str = ""
+    brandName: str = ""
+    productId: str = ""
+    productName: str = ""
+    items: List[BuyerInquiryLineItem]
+
+
+class BuyerInquiryFollowUpPayload(BaseModel):
+    message: str
+
+
 class SettingsRecord(BaseModel):
     shopName: str
     contactEmail: str
@@ -274,6 +392,10 @@ class SettingsRecord(BaseModel):
     samplePolicy: str
     defaultPaymentTerms: str
     defaultSampleFeePolicy: str
+    paypalClientId: str = ""
+    paypalClientSecret: str = ""
+    paypalSandboxMode: bool = True
+    enablePayPal: bool = False
 
 
 class MemberRecord(BaseModel):
@@ -352,3 +474,61 @@ class OperationLogRecord(BaseModel):
     action: str
     target: str
     createdAt: str
+
+
+class PayPalPaymentRequest(BaseModel):
+    orderId: str
+    amount: float
+    currency: str = "USD"
+    returnUrl: str
+    cancelUrl: str
+
+
+class PayPalPaymentResponse(BaseModel):
+    paymentId: str
+    approvalUrl: str
+    status: str
+
+
+class PayPalPaymentCaptureRequest(BaseModel):
+    paymentId: str
+    payerId: str
+
+
+class PayPalPaymentStatus(BaseModel):
+    paymentId: str
+    status: Literal["created", "approved", "failed", "canceled"]
+    amount: float
+    currency: str
+    createdAt: str
+    updatedAt: str
+
+
+class CartItem(BaseModel):
+    productId: str
+    quantity: int
+
+
+class CartResponse(BaseModel):
+    items: List[CartItem]
+    total: float
+
+
+class FavoriteItem(BaseModel):
+    productId: str = ""
+    brandId: str = ""
+
+
+class FavoritesResponse(BaseModel):
+    products: List[str]
+    brands: List[str]
+
+
+class CompareItem(BaseModel):
+    productId: str = ""
+    brandId: str = ""
+
+
+class CompareResponse(BaseModel):
+    products: List[str]
+    brands: List[str]

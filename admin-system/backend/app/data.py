@@ -5,9 +5,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
+from fastapi import HTTPException
 
 from .schemas import (
     AuthUser,
+    BuyerAccountRecord,
+    BuyerAuthUser,
+    BuyerInquiryActivity,
+    BuyerInquiryFollowUpPayload,
+    BuyerInquiryLineItem,
+    BuyerInquiryPayload,
+    BuyerInquiryRecord,
+    BuyerLoginPayload,
+    BuyerRegisterPayload,
     ChangePasswordPayload,
     DashboardMetric,
     DashboardTask,
@@ -33,6 +43,10 @@ from .schemas import (
     OrderRecord,
     OrderShippingPayload,
     OrderTimelineStep,
+    PayPalPaymentCaptureRequest,
+    PayPalPaymentRequest,
+    PayPalPaymentResponse,
+    PayPalPaymentStatus,
     ProductPayload,
     ProductRecord,
     ProductSku,
@@ -102,6 +116,10 @@ def now_label() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+def now_iso() -> str:
+    return datetime.now().replace(microsecond=0).isoformat()
+
+
 def permissions_for_role(role: str) -> List[str]:
     return list(ROLE_DEFINITIONS[role]["permissions"])
 
@@ -112,6 +130,18 @@ def build_auth_user(member: MemberRecord) -> AuthUser:
         displayName=member.displayName,
         role=member.role,
         permissions=permissions_for_role(member.role),
+    )
+
+
+def build_buyer_auth_user(account: BuyerAccountRecord) -> BuyerAuthUser:
+    return BuyerAuthUser(
+        id=account.id,
+        email=account.email,
+        contactName=account.contactName,
+        businessName=account.businessName,
+        businessType=account.businessType,
+        phoneNumber=account.phoneNumber,
+        country=account.country,
     )
 
 
@@ -223,6 +253,13 @@ def ensure_schema(connection: sqlite3.Connection):
             password_hash TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS buyers (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            payload TEXT NOT NULL,
+            password_hash TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS products (
             id TEXT PRIMARY KEY,
             updated_at TEXT NOT NULL,
@@ -259,6 +296,58 @@ def ensure_schema(connection: sqlite3.Connection):
             id TEXT PRIMARY KEY,
             created_at TEXT NOT NULL,
             payload TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS paypal_payments (
+            payment_id TEXT PRIMARY KEY,
+            order_id TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            status TEXT NOT NULL,
+            return_url TEXT NOT NULL,
+            cancel_url TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS cart (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(buyer_id, product_id),
+            FOREIGN KEY (buyer_id) REFERENCES buyers(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer_id TEXT NOT NULL,
+            product_id TEXT,
+            brand_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(buyer_id, product_id),
+            UNIQUE(buyer_id, brand_id),
+            FOREIGN KEY (buyer_id) REFERENCES buyers(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS compare (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer_id TEXT NOT NULL,
+            product_id TEXT,
+            brand_id TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(buyer_id, product_id),
+            UNIQUE(buyer_id, brand_id),
+            FOREIGN KEY (buyer_id) REFERENCES buyers(id) ON DELETE CASCADE
         );
         """
     )
@@ -671,6 +760,22 @@ def save_member(connection: sqlite3.Connection, member: MemberRecord, password_h
     )
 
 
+def save_buyer(connection: sqlite3.Connection, buyer: BuyerAccountRecord, password_hash: Optional[str] = None):
+    existing = connection.execute("SELECT password_hash FROM buyers WHERE id = ?", (buyer.id,)).fetchone()
+    effective_hash = password_hash or (existing["password_hash"] if existing else "")
+    connection.execute(
+        "REPLACE INTO buyers (id, email, payload, password_hash) VALUES (?, ?, ?, ?)",
+        (buyer.id, buyer.email.lower(), json_dumps(model_to_dict(buyer)), effective_hash),
+    )
+
+
+def save_session(connection: sqlite3.Connection, token: str, subject_type: str, subject_id: str):
+    connection.execute(
+        "REPLACE INTO sessions (token, subject_type, subject_id, created_at) VALUES (?, ?, ?, ?)",
+        (token, subject_type, subject_id, now_label()),
+    )
+
+
 def save_product(connection: sqlite3.Connection, product: ProductRecord):
     sync_product_english_state(product)
     connection.execute(
@@ -762,6 +867,42 @@ def read_member(username: str) -> Optional[Tuple[MemberRecord, str]]:
         member = model_from_dict(MemberRecord, json_loads(row["payload"]))
         member.permissions = permissions_for_role(member.role)
         return member, row["password_hash"]
+    finally:
+        connection.close()
+
+
+def read_buyer_by_email(email: str) -> Optional[Tuple[BuyerAccountRecord, str]]:
+    normalized_email = email.strip().lower()
+    connection = db_connection()
+    try:
+        row = connection.execute("SELECT payload, password_hash FROM buyers WHERE email = ?", (normalized_email,)).fetchone()
+        if not row:
+            return None
+        buyer = model_from_dict(BuyerAccountRecord, json_loads(row["payload"]))
+        return buyer, row["password_hash"]
+    finally:
+        connection.close()
+
+
+def read_buyer_by_id(buyer_id: str) -> Optional[Tuple[BuyerAccountRecord, str]]:
+    connection = db_connection()
+    try:
+        row = connection.execute("SELECT payload, password_hash FROM buyers WHERE id = ?", (buyer_id,)).fetchone()
+        if not row:
+            return None
+        buyer = model_from_dict(BuyerAccountRecord, json_loads(row["payload"]))
+        return buyer, row["password_hash"]
+    finally:
+        connection.close()
+
+
+def read_session(token: str) -> Optional[Tuple[str, str]]:
+    connection = db_connection()
+    try:
+        row = connection.execute("SELECT subject_type, subject_id FROM sessions WHERE token = ?", (token,)).fetchone()
+        if not row:
+            return None
+        return row["subject_type"], row["subject_id"]
     finally:
         connection.close()
 
@@ -936,6 +1077,17 @@ def next_product_id(connection: sqlite3.Connection) -> str:
     return "PROD-{}".format(max(numbers + [1000]) + 1)
 
 
+def next_buyer_id(connection: sqlite3.Connection) -> str:
+    rows = connection.execute("SELECT id FROM buyers").fetchall()
+    numbers = []
+    for row in rows:
+        try:
+            numbers.append(int(row["id"].replace("BUY-", "")))
+        except ValueError:
+            continue
+    return "BUY-{}".format(max(numbers + [1000]) + 1)
+
+
 def next_order_id(connection: sqlite3.Connection) -> str:
     rows = connection.execute("SELECT id FROM orders").fetchall()
     numbers = []
@@ -947,6 +1099,17 @@ def next_order_id(connection: sqlite3.Connection) -> str:
     return "ORD-{}".format(max(numbers + [90210]) + 1)
 
 
+def next_inquiry_id(connection: sqlite3.Connection) -> str:
+    rows = connection.execute("SELECT id FROM inquiries").fetchall()
+    numbers = []
+    for row in rows:
+        try:
+            numbers.append(int(row["id"].replace("INQ-", "")))
+        except ValueError:
+            continue
+    return "INQ-{}".format(max(numbers + [3000]) + 1)
+
+
 def next_shipment_batch_id(connection: sqlite3.Connection) -> str:
     rows = connection.execute("SELECT id FROM shipment_batches").fetchall()
     numbers = []
@@ -956,6 +1119,17 @@ def next_shipment_batch_id(connection: sqlite3.Connection) -> str:
         except ValueError:
             continue
     return "BAT-{}".format(max(numbers + [5000]) + 1)
+
+
+def create_session(subject_type: str, subject_id: str, prefix: str) -> str:
+    token = "{}{}".format(prefix, uuid4().hex)
+    connection = db_connection()
+    try:
+        save_session(connection, token, subject_type, subject_id)
+        connection.commit()
+    finally:
+        connection.close()
+    return token
 
 
 def operation_log(actor: str, action: str, target: str):
@@ -1256,6 +1430,241 @@ def mark_shipment_batch_printed(batch_id: str) -> Optional[ShipmentBatchRecord]:
         connection.close()
     operation_log("运营专员", "打印发货批次", batch_id)
     return batch
+
+
+def normalize_buyer_inquiry_status(status: str) -> str:
+    mapping = {
+        "new": "submitted",
+        "follow_up": "reviewing",
+        "quoted": "quoted",
+        "converted": "closed",
+    }
+    return mapping.get(status, "reviewing")
+
+
+def buyer_inquiry_created_at(inquiry: InquiryDetail) -> str:
+    if inquiry.activities:
+        return inquiry.activities[0].createdAt
+    return inquiry.updatedAt
+
+
+def to_iso_timestamp(value: str) -> str:
+    if "T" in value:
+        return value
+    if len(value) == 16 and " " in value:
+        return "{}:00".format(value.replace(" ", "T"))
+    return value
+
+
+def build_buyer_inquiry_topic(payload: BuyerInquiryPayload) -> str:
+    if payload.productName.strip():
+        return "商品询盘：{}".format(payload.productName.strip())
+    if payload.brandName.strip():
+        return "品牌询盘：{}".format(payload.brandName.strip())
+    if payload.items:
+        return "整单询盘：{} 个商品条目".format(len(payload.items))
+    return "通用询盘"
+
+
+def build_buyer_inquiry_priority(payload: BuyerInquiryPayload) -> str:
+    if payload.needSample or len(payload.items) >= 2:
+        return "high"
+    if payload.targetPrice.strip():
+        return "medium"
+    return "low"
+
+
+def serialize_buyer_inquiry(inquiry: InquiryDetail) -> BuyerInquiryRecord:
+    buyer_follow_up_times = []
+    activities: List[BuyerInquiryActivity] = []
+
+    for index, activity in enumerate(inquiry.activities):
+        if activity.role == "buyer":
+            activity_type = "created" if index == 0 else "buyer_follow_up"
+            title = "已提交询盘" if index == 0 else "补充跟进信息"
+            author = "buyer"
+            if index > 0:
+                buyer_follow_up_times.append(activity.createdAt)
+        elif activity.role == "seller":
+            activity_type = "advisor_update"
+            title = "顾问回复"
+            author = "advisor"
+        else:
+            activity_type = "status_change"
+            title = "状态更新"
+            author = "system"
+
+        activities.append(
+            BuyerInquiryActivity(
+                id=activity.id,
+                createdAt=to_iso_timestamp(activity.createdAt),
+                type=activity_type,
+                author=author,
+                title=title,
+                message=activity.message,
+                status=normalize_buyer_inquiry_status(inquiry.status) if activity.role == "system" else None,
+            )
+        )
+
+    return BuyerInquiryRecord(
+        id=inquiry.id,
+        createdAt=to_iso_timestamp(buyer_inquiry_created_at(inquiry)),
+        updatedAt=to_iso_timestamp(inquiry.updatedAt),
+        status=normalize_buyer_inquiry_status(inquiry.status),
+        source=inquiry.source,
+        buyerName=inquiry.buyer,
+        email=inquiry.email,
+        company=inquiry.company,
+        role=inquiry.buyerRole or "采购联系人",
+        destinationCountry=inquiry.destination,
+        targetPrice=inquiry.targetPrice,
+        needSample=inquiry.needSample,
+        message=inquiry.activities[0].message if inquiry.activities else "",
+        brandId=inquiry.brandId,
+        brandName=inquiry.brandName,
+        productId=inquiry.productId,
+        productName=inquiry.productName,
+        items=[
+            BuyerInquiryLineItem(
+                productId=item.productId,
+                productName=item.productName,
+                brandId=item.brandId or inquiry.brandId,
+                brandName=item.brandName or inquiry.brandName,
+                quantity=item.quantity,
+                minOrderQuantity=item.moq,
+                unitPrice=parse_amount(item.priceHint),
+            )
+            for item in inquiry.items
+        ],
+        activities=activities,
+        lastFollowUpAt=to_iso_timestamp(buyer_follow_up_times[-1]) if buyer_follow_up_times else None,
+    )
+
+
+def list_buyer_inquiries(buyer_id: str) -> List[BuyerInquiryRecord]:
+    return [serialize_buyer_inquiry(inquiry) for inquiry in read_all_inquiries() if inquiry.buyerAccountId == buyer_id]
+
+
+def get_buyer_inquiry_detail(buyer_id: str, inquiry_id: str) -> Optional[BuyerInquiryRecord]:
+    inquiry = read_inquiry(inquiry_id)
+    if not inquiry or inquiry.buyerAccountId != buyer_id:
+        return None
+    return serialize_buyer_inquiry(inquiry)
+
+
+def create_buyer_inquiry(buyer: BuyerAuthUser, payload: BuyerInquiryPayload) -> BuyerInquiryRecord:
+    if not payload.buyerName.strip() or not payload.company.strip() or not payload.destinationCountry.strip() or not payload.message.strip():
+        raise ValueError("请补齐联系人、公司、目标市场和需求说明。")
+
+    connection = db_connection()
+    try:
+        inquiry = InquiryDetail(
+            id=next_inquiry_id(connection),
+            buyer=payload.buyerName.strip(),
+            topic=build_buyer_inquiry_topic(payload),
+            priority=build_buyer_inquiry_priority(payload),
+            status="new",
+            updatedAt=now_label(),
+            latestQuoteVersion="",
+            convertedOrderId="",
+            company=payload.company.strip(),
+            email=buyer.email,
+            destination=payload.destinationCountry.strip(),
+            owner="待分配",
+            buyerRole=payload.role.strip(),
+            targetPrice=payload.targetPrice.strip(),
+            needSample=payload.needSample,
+            items=[
+                InquiryItem(
+                    productId=item.productId,
+                    brandId=item.brandId,
+                    brandName=item.brandName,
+                    productName=item.productName,
+                    quantity=item.quantity,
+                    moq=item.minOrderQuantity,
+                    priceHint="${:.2f}".format(item.unitPrice),
+                )
+                for item in payload.items
+            ],
+            activities=[
+                InquiryActivity(
+                    id="ACT-{}".format(uuid4().hex[:8].upper()),
+                    author=payload.buyerName.strip(),
+                    role="buyer",
+                    message=payload.message.strip(),
+                    createdAt=now_label(),
+                )
+            ],
+            internalNotes=[
+                InquiryNote(
+                    id="NOTE-{}".format(uuid4().hex[:8].upper()),
+                    author="系统",
+                    message="来自买家前台的新询盘，待销售分配负责人。",
+                    createdAt=now_label(),
+                )
+            ],
+            quotes=[],
+            buyerAccountId=buyer.id,
+            source=payload.source,
+            brandId=payload.brandId.strip(),
+            brandName=payload.brandName.strip(),
+            productId=payload.productId.strip(),
+            productName=payload.productName.strip(),
+        )
+        save_inquiry(connection, inquiry)
+        connection.commit()
+    finally:
+        connection.close()
+    operation_log(buyer.contactName, "提交买家询盘", inquiry.id)
+    return serialize_buyer_inquiry(inquiry)
+
+
+def add_buyer_inquiry_follow_up(
+    buyer: BuyerAuthUser,
+    inquiry_id: str,
+    payload: BuyerInquiryFollowUpPayload,
+) -> Optional[BuyerInquiryRecord]:
+    if not payload.message.strip():
+        raise ValueError("请填写跟进内容。")
+
+    connection = db_connection()
+    try:
+        row = connection.execute("SELECT payload FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        if not row:
+            return None
+        inquiry = model_from_dict(InquiryDetail, json_loads(row["payload"]))
+        if inquiry.buyerAccountId != buyer.id:
+            return None
+        if inquiry.status == "converted":
+            raise ValueError("该询盘已转成订单，当前不能再追加买家跟进。")
+
+        inquiry.activities.append(
+            InquiryActivity(
+                id="ACT-{}".format(uuid4().hex[:8].upper()),
+                author=buyer.contactName,
+                role="buyer",
+                message=payload.message.strip(),
+                createdAt=now_label(),
+            )
+        )
+        inquiry.activities.append(
+            InquiryActivity(
+                id="ACT-{}".format(uuid4().hex[:8].upper()),
+                author="顾问系统",
+                role="seller",
+                message="我们已收到你的补充说明，会继续跟进并同步最新进展。",
+                createdAt=now_label(),
+            )
+        )
+        inquiry.updatedAt = now_label()
+        if inquiry.status == "new":
+            inquiry.status = "follow_up"
+        save_inquiry(connection, inquiry)
+        connection.commit()
+    finally:
+        connection.close()
+    operation_log(buyer.contactName, "补充买家询盘跟进", inquiry_id)
+    return serialize_buyer_inquiry(inquiry)
 
 
 def list_inquiry_records() -> List[InquiryRecord]:
@@ -1599,14 +2008,79 @@ def authenticate_user(username: str, password: str, device_name: str = "", ip_ad
     return build_auth_user(member)
 
 
+def register_buyer_account(payload: BuyerRegisterPayload) -> BuyerAuthUser:
+    normalized_email = payload.email.strip().lower()
+    if not payload.contactName.strip() or not normalized_email or not payload.password.strip() or not payload.businessName.strip():
+        raise ValueError("请完整填写注册信息。")
+    if len(payload.password.strip()) < 6:
+        raise ValueError("密码至少需要 6 位。")
+    if read_buyer_by_email(normalized_email):
+        raise ValueError("该邮箱已注册，请直接登录。")
+
+    connection = db_connection()
+    try:
+        account = BuyerAccountRecord(
+            id=next_buyer_id(connection),
+            email=normalized_email,
+            contactName=payload.contactName.strip(),
+            businessName=payload.businessName.strip(),
+            businessType=payload.businessType.strip(),
+            phoneNumber=payload.phoneNumber.strip(),
+            country=payload.country.strip(),
+            createdAt=now_iso(),
+            lastLoginAt=now_iso(),
+        )
+        save_buyer(connection, account, hash_password(payload.password.strip()))
+        connection.commit()
+    finally:
+        connection.close()
+    operation_log(account.contactName, "注册买家账号", account.email)
+    return build_buyer_auth_user(account)
+
+
+def authenticate_buyer_user(email: str, password: str) -> BuyerAuthUser:
+    found = read_buyer_by_email(email)
+    if not found:
+        raise ValueError("账号不存在，请先注册。")
+    account, password_hash = found
+    if hash_password(password) != password_hash:
+        raise ValueError("密码错误，请重新输入。")
+
+    account.lastLoginAt = now_iso()
+    connection = db_connection()
+    try:
+        save_buyer(connection, account, password_hash)
+        connection.commit()
+    finally:
+        connection.close()
+    operation_log(account.contactName, "登录买家账号", account.email)
+    return build_buyer_auth_user(account)
+
+
 def get_user_by_token(token: str) -> Optional[AuthUser]:
-    if not token.startswith("seller-admin-token-"):
+    session = read_session(token)
+    if not session:
         return None
-    username = token.replace("seller-admin-token-", "", 1)
-    member = get_member(username)
+    subject_type, subject_id = session
+    if subject_type != "admin":
+        return None
+    member = get_member(subject_id)
     if not member or member.status != "active":
         return None
     return build_auth_user(member)
+
+
+def get_buyer_by_token(token: str) -> Optional[BuyerAuthUser]:
+    session = read_session(token)
+    if not session:
+        return None
+    subject_type, subject_id = session
+    if subject_type != "buyer":
+        return None
+    found = read_buyer_by_id(subject_id)
+    if not found:
+        return None
+    return build_buyer_auth_user(found[0])
 
 
 def list_member_records() -> List[MemberRecord]:
@@ -1747,3 +2221,331 @@ def list_operation_logs() -> List[OperationLogRecord]:
 
 def list_login_logs(username: str = "") -> List[LoginLogRecord]:
     return read_all_login_logs(username)
+
+
+def create_paypal_payment(request: PayPalPaymentRequest) -> PayPalPaymentResponse:
+    conn = db_connection()
+    try:
+        payment_id = f"PAY-{uuid4().hex[:16].upper()}"
+        approval_url = f"https://www.sandbox.paypal.com/checkoutnow?token={payment_id}"
+        
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO paypal_payments (payment_id, order_id, amount, currency, status, return_url, cancel_url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'created', ?, ?, ?, ?)
+            """,
+            (payment_id, request.orderId, request.amount, request.currency, request.returnUrl, request.cancelUrl, now_iso(), now_iso())
+        )
+        conn.commit()
+        
+        return PayPalPaymentResponse(
+            paymentId=payment_id,
+            approvalUrl=approval_url,
+            status="created"
+        )
+    finally:
+        conn.close()
+
+
+def capture_paypal_payment(request: PayPalPaymentCaptureRequest) -> PayPalPaymentStatus:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE paypal_payments
+            SET status = 'approved', updated_at = ?
+            WHERE payment_id = ?
+            """,
+            (now_iso(), request.paymentId)
+        )
+        conn.commit()
+        
+        return get_paypal_payment_status(request.paymentId)
+    finally:
+        conn.close()
+
+
+def get_paypal_payment_status(payment_id: str) -> PayPalPaymentStatus:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT payment_id, status, amount, currency, created_at, updated_at
+            FROM paypal_payments
+            WHERE payment_id = ?
+            """,
+            (payment_id,)
+        )
+        row = cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        
+        return PayPalPaymentStatus(
+            paymentId=row[0],
+            status=row[1],
+            amount=row[2],
+            currency=row[3],
+            createdAt=row[4],
+            updatedAt=row[5]
+        )
+    finally:
+        conn.close()
+
+
+def get_cart_items(buyer_id: str) -> List[dict]:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, quantity
+            FROM cart
+            WHERE buyer_id = ?
+            """,
+            (buyer_id,)
+        )
+        rows = cursor.fetchall()
+        return [{"productId": row[0], "quantity": row[1]} for row in rows]
+    finally:
+        conn.close()
+
+
+def add_cart_item(buyer_id: str, product_id: str, quantity: int) -> dict:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO cart (buyer_id, product_id, quantity, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(buyer_id, product_id) 
+            DO UPDATE SET quantity = quantity + excluded.quantity, updated_at = ?
+            """,
+            (buyer_id, product_id, quantity, now_iso(), now_iso())
+        )
+        conn.commit()
+        return {"productId": product_id, "quantity": quantity}
+    finally:
+        conn.close()
+
+
+def update_cart_item(buyer_id: str, product_id: str, quantity: int) -> dict:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE cart
+            SET quantity = ?, updated_at = ?
+            WHERE buyer_id = ? AND product_id = ?
+            """,
+            (quantity, now_iso(), buyer_id, product_id)
+        )
+        conn.commit()
+        return {"productId": product_id, "quantity": quantity}
+    finally:
+        conn.close()
+
+
+def remove_cart_item(buyer_id: str, product_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM cart
+            WHERE buyer_id = ? AND product_id = ?
+            """,
+            (buyer_id, product_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_cart(buyer_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM cart
+            WHERE buyer_id = ?
+            """,
+            (buyer_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_favorites(buyer_id: str) -> dict:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, brand_id
+            FROM favorites
+            WHERE buyer_id = ?
+            """,
+            (buyer_id,)
+        )
+        rows = cursor.fetchall()
+        products = [row[0] for row in rows if row[0]]
+        brands = [row[1] for row in rows if row[1]]
+        return {"products": products, "brands": brands}
+    finally:
+        conn.close()
+
+
+def add_favorite_product(buyer_id: str, product_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO favorites (buyer_id, product_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (buyer_id, product_id, now_iso())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_favorite_product(buyer_id: str, product_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM favorites
+            WHERE buyer_id = ? AND product_id = ?
+            """,
+            (buyer_id, product_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_favorite_brand(buyer_id: str, brand_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO favorites (buyer_id, brand_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (buyer_id, brand_id, now_iso())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_favorite_brand(buyer_id: str, brand_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM favorites
+            WHERE buyer_id = ? AND brand_id = ?
+            """,
+            (buyer_id, brand_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_compare_items(buyer_id: str) -> dict:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT product_id, brand_id
+            FROM compare
+            WHERE buyer_id = ?
+            """,
+            (buyer_id,)
+        )
+        rows = cursor.fetchall()
+        products = [row[0] for row in rows if row[0]]
+        brands = [row[1] for row in rows if row[1]]
+        return {"products": products, "brands": brands}
+    finally:
+        conn.close()
+
+
+def add_compare_product(buyer_id: str, product_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO compare (buyer_id, product_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (buyer_id, product_id, now_iso())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_compare_product(buyer_id: str, product_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM compare
+            WHERE buyer_id = ? AND product_id = ?
+            """,
+            (buyer_id, product_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_compare_brand(buyer_id: str, brand_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO compare (buyer_id, brand_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (buyer_id, brand_id, now_iso())
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_compare_brand(buyer_id: str, brand_id: str) -> None:
+    conn = db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM compare
+            WHERE buyer_id = ? AND brand_id = ?
+            """,
+            (buyer_id, brand_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()

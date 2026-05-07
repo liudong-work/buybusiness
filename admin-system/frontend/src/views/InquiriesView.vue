@@ -311,6 +311,74 @@ function openConvertedOrder() {
 function cardClass(inquiryId: string) {
   return highlightedInquiryId.value === inquiryId ? 'metric-card inquiry-card inquiry-card--highlight' : 'metric-card inquiry-card';
 }
+
+const batchAssignModalOpen = ref(false);
+const selectedInquiryIds = ref<string[]>([]);
+const batchAssignOwner = ref('');
+
+function openBatchAssignModal() {
+  selectedInquiryIds.value = [...inquiries.value.filter((item) => item.status === 'new').map((item) => item.id)];
+  batchAssignOwner.value = '';
+  batchAssignModalOpen.value = true;
+}
+
+async function submitBatchAssign() {
+  if (!batchAssignOwner.value.trim()) {
+    message.warning('请选择负责人');
+    return;
+  }
+  if (!selectedInquiryIds.value.length) {
+    message.warning('请选择要分配的询盘');
+    return;
+  }
+
+  actionLoading.value = true;
+  try {
+    const response = await fetch('/api/v1/inquiries/batch-assign', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        inquiryIds: selectedInquiryIds.value,
+        owner: batchAssignOwner.value,
+      }),
+    });
+    const data = await response.json();
+    if (data.success) {
+      message.success(`成功分配 ${data.updatedCount} 条询盘`);
+      await store.loadInquiries();
+      batchAssignModalOpen.value = false;
+    } else {
+      message.error('分配失败');
+    }
+  } catch (error) {
+    message.error('分配失败');
+    console.error('Batch assign failed:', error);
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function exportInquiries() {
+  const status = activeStatusFilter.value;
+  try {
+    const url = `/api/v1/inquiries/export${status ? `?status=${status}` : ''}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    const blob = new Blob([data.data], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.download = data.filename;
+    link.click();
+    window.URL.revokeObjectURL(link.href);
+    message.success(`已导出 ${data.count} 条询盘`);
+  } catch (error) {
+    message.error('导出失败');
+    console.error('Export failed:', error);
+  }
+}
 </script>
 
 <template>
@@ -324,9 +392,10 @@ function cardClass(inquiryId: string) {
         </p>
       </div>
       <a-space>
-        <a-button>分配负责人</a-button>
-        <a-button type="primary">批量回复</a-button>
-      </a-space>
+          <a-button @click="openBatchAssignModal">批量分配负责人</a-button>
+          <a-button type="primary">批量回复</a-button>
+          <a-button @click="exportInquiries">导出询盘列表</a-button>
+        </a-space>
     </div>
 
     <a-row :gutter="[18, 18]">
@@ -666,6 +735,32 @@ function cardClass(inquiryId: string) {
         </template>
       </a-spin>
     </a-drawer>
+
+    <a-modal
+      v-model:open="batchAssignModalOpen"
+      title="批量分配负责人"
+      :footer="null"
+      :width="520"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="选择负责人">
+          <a-select v-model:value="batchAssignOwner" :options="ownerOptions" style="width: 100%" />
+        </a-form-item>
+        <a-form-item label="待分配询盘">
+          <div style="padding: 12px; border-radius: 12px; background: #f8fafc; max-height: 200px; overflow-y: auto">
+            <div v-for="id in selectedInquiryIds" :key="id" style="color: #6b7280; font-size: 13px">{{ id }}</div>
+            <div v-if="!selectedInquiryIds.length" style="color: #94a3b8">暂无待分配的询盘</div>
+          </div>
+        </a-form-item>
+        <a-form-item label="分配数量">
+          <span style="font-weight: 700; color: #111827">{{ selectedInquiryIds.length }} 条询盘</span>
+        </a-form-item>
+      </a-form>
+      <div style="margin-top: 24px; display: flex; justify-content: flex-end; gap: 12px">
+        <a-button @click="batchAssignModalOpen = false">取消</a-button>
+        <a-button type="primary" :loading="actionLoading" @click="submitBatchAssign">确认分配</a-button>
+      </div>
+    </a-modal>
   </div>
 </template>
 

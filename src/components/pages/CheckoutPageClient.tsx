@@ -11,6 +11,7 @@ import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { SiteNav } from '@/components/site/SiteNav';
+import { PayPalProvider, PayPalPayment } from '@/components/payment/PayPalPayment';
 
 type CheckoutFormState = {
   contactName: string;
@@ -42,6 +43,8 @@ export default function CheckoutPageClient() {
     paymentMethod: 'net60',
     notes: '',
   });
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [paypalOrderId, setPaypalOrderId] = useState<string | null>(null);
 
   useEffect(() => subscribeCartUpdates(() => setCartItems(getCartDisplayItems())), []);
 
@@ -52,8 +55,52 @@ export default function CheckoutPageClient() {
   const shipping = subtotal > 250 ? 0 : 25;
   const total = subtotal + shipping;
 
+  const handlePayPalSuccess = (data: any) => {
+    const orderId = createOrderId();
+    const newOrder: Order = {
+      id: orderId,
+      createdAt: new Date().toISOString(),
+      status: 'submitted',
+      contactName: formData.contactName,
+      email: formData.email,
+      company: formData.company,
+      destinationCountry: formData.destinationCountry,
+      shippingAddress: formData.shippingAddress,
+      paymentMethod: 'paypal',
+      notes: formData.notes,
+      subtotal,
+      shipping,
+      total,
+      items: cartItems.map((item) => ({
+        productId: item.productId,
+        productName: item.product.name,
+        brandId: item.brand.id,
+        brandName: item.brand.name,
+        quantity: item.quantity,
+        unitPrice: item.product.price,
+        minOrderQuantity: item.product.minOrderQuantity,
+      })),
+      paypalPaymentId: data.orderID,
+    };
+
+    prependStoredOrder(newOrder);
+    clearStoredCart();
+    router.push(`/checkout/success?order=${encodeURIComponent(orderId)}`);
+  };
+
+  const handlePayPalError = (error: any) => {
+    console.error('PayPal payment error:', error);
+    alert('PayPal 支付失败，请重试或选择其他支付方式');
+    setIsProcessing(false);
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (formData.paymentMethod === 'paypal') {
+      setIsProcessing(true);
+      return;
+    }
 
     const orderId = createOrderId();
     const newOrder: Order = {
@@ -222,14 +269,16 @@ export default function CheckoutPageClient() {
                   支付方式
                   <select
                     value={formData.paymentMethod}
-                    onChange={(event) =>
-                      setFormData((current) => ({ ...current, paymentMethod: event.target.value }))
-                    }
+                    onChange={(event) => {
+                      setFormData((current) => ({ ...current, paymentMethod: event.target.value }));
+                      setIsProcessing(false);
+                    }}
                     className="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-gray-900 outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
                   >
                     <option value="net60">Net 60</option>
                     <option value="card">Corporate Card</option>
                     <option value="wire">Wire Transfer</option>
+                    <option value="paypal">PayPal (International)</option>
                   </select>
                 </label>
 
@@ -246,13 +295,39 @@ export default function CheckoutPageClient() {
                   ></textarea>
                 </label>
 
+                {formData.paymentMethod === 'paypal' && (
+                  <div className="rounded-2xl border border-gray-200 bg-gray-50 p-6">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                        <CreditCard className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-gray-900">PayPal 支付</h3>
+                        <p className="text-sm text-gray-600">安全便捷的国际支付方式</p>
+                      </div>
+                    </div>
+                    <PayPalProvider clientId="test">
+                      <PayPalPayment
+                        amount={total.toFixed(2)}
+                        currency="USD"
+                        showSpinner={true}
+                        onSuccess={handlePayPalSuccess}
+                        onError={handlePayPalError}
+                        disabled={!formData.contactName || !formData.email || !formData.company || !formData.destinationCountry || !formData.shippingAddress}
+                      />
+                    </PayPalProvider>
+                  </div>
+                )}
+
                 <div className="flex flex-col gap-4 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
                   <p className="max-w-xl text-sm leading-6 text-gray-500">
                     下单后会跳到成功页，并清空购物车，完成前端交易路径的最后一步演示。
                   </p>
-                  <button className="brand-button-primary" type="submit">
-                    提交订单 <ArrowRight className="ml-2 h-4 w-4" />
-                  </button>
+                  {formData.paymentMethod !== 'paypal' && (
+                    <button className="brand-button-primary" type="submit">
+                      提交订单 <ArrowRight className="ml-2 h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               </form>
             </div>

@@ -12,20 +12,22 @@ import {
   ShoppingBag,
   Star,
 } from 'lucide-react';
+import { fetchBuyerInquiries, subscribeBuyerInquiryUpdates } from '@/lib/buyerApi';
+import { getStoredBuyerUser, subscribeBuyerAuthUpdates } from '@/lib/buyerAuth';
 import { getCartDisplayItems, subscribeCartUpdates } from '@/lib/cart';
 import { loadStoredCompare, subscribeCompareUpdates } from '@/lib/compare';
 import { loadStoredFavorites, subscribeFavoriteUpdates } from '@/lib/favorites';
 import { getBrandById, getProductById } from '@/lib/mockData';
-import { loadStoredInquiries, subscribeInquiryUpdates } from '@/lib/inquiries';
 import { getOrderStatusMeta, loadStoredOrders, subscribeOrderUpdates } from '@/lib/orders';
 import { loadStoredRecentViews, subscribeRecentViewUpdates } from '@/lib/recentViews';
-import { type CompareState, type FavoriteState, type Inquiry, type Order, type RecentView } from '@/types';
+import { type BuyerUser, type CompareState, type FavoriteState, type Inquiry, type Order, type RecentView } from '@/types';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { SiteNav } from '@/components/site/SiteNav';
 
 export default function AccountDashboardPageClient() {
+  const [buyerUser, setBuyerUser] = useState<BuyerUser | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [favorites, setFavorites] = useState<FavoriteState>({ productIds: [], brandIds: [] });
@@ -35,21 +37,41 @@ export default function AccountDashboardPageClient() {
 
   useEffect(() => {
     const syncOrders = () => setOrders(loadStoredOrders());
-    const syncInquiries = () => setInquiries(loadStoredInquiries());
     const syncFavorites = () => setFavorites(loadStoredFavorites());
     const syncCompare = () => setCompareState(loadStoredCompare());
     const syncRecentViews = () => setRecentViews(loadStoredRecentViews());
     const syncCart = () => setCartItemCount(getCartDisplayItems().length);
+    const syncBuyer = () => setBuyerUser(getStoredBuyerUser());
+    const syncInquiries = async () => {
+      const user = getStoredBuyerUser();
+      setBuyerUser(user);
+      if (!user) {
+        setInquiries([]);
+        return;
+      }
+      try {
+        setInquiries(await fetchBuyerInquiries());
+      } catch {
+        setInquiries([]);
+      }
+    };
 
     syncOrders();
-    syncInquiries();
+    syncBuyer();
+    void syncInquiries();
     syncFavorites();
     syncCompare();
     syncRecentViews();
     syncCart();
 
     const unsubscribeOrders = subscribeOrderUpdates(syncOrders);
-    const unsubscribeInquiries = subscribeInquiryUpdates(syncInquiries);
+    const unsubscribeInquiries = subscribeBuyerInquiryUpdates(() => {
+      void syncInquiries();
+    });
+    const unsubscribeBuyer = subscribeBuyerAuthUpdates(() => {
+      syncBuyer();
+      void syncInquiries();
+    });
     const unsubscribeFavorites = subscribeFavoriteUpdates(syncFavorites);
     const unsubscribeCompare = subscribeCompareUpdates(syncCompare);
     const unsubscribeRecentViews = subscribeRecentViewUpdates(syncRecentViews);
@@ -58,6 +80,7 @@ export default function AccountDashboardPageClient() {
     return () => {
       unsubscribeOrders();
       unsubscribeInquiries();
+      unsubscribeBuyer();
       unsubscribeFavorites();
       unsubscribeCompare();
       unsubscribeRecentViews();
@@ -111,8 +134,12 @@ export default function AccountDashboardPageClient() {
 
       <PageHero
         eyebrow="Buyer Workspace"
-        title="把订单、询盘、收藏和采购动作收进同一个买家工作台"
-        description="这一步让用户提交过的动作不再散落在各个页面里，而是形成一个能回访、能继续推进的前端工作流入口。"
+        title={buyerUser ? `欢迎回来，${buyerUser.contactName}` : '把订单、询盘、收藏和采购动作收进同一个买家工作台'}
+        description={
+          buyerUser
+            ? '当前账号已经接入真实后端，询盘会和卖家后台同步，收藏、对比和浏览行为则继续在前台工作台里承接。'
+            : '登录后，这里会把你的询盘、收藏和采购动作聚合成统一的买家工作台入口。'
+        }
         stats={[
           { label: '订单总数', value: `${orders.length}` },
           { label: '进行中订单', value: `${processingOrderCount}` },

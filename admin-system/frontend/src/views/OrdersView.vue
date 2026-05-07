@@ -351,6 +351,25 @@ function exportBatch(batch: ShipmentBatchRecord) {
 function rowClassName(record: OrderRecord) {
   return highlightedOrderId.value === record.id ? 'orders-row--highlight' : '';
 }
+
+async function exportOrders() {
+  const status = activeStatusFilter.value;
+  try {
+    const response = await fetch(`/api/v1/orders/export${status ? `?status=${status}` : ''}`);
+    const data = await response.json();
+    
+    const blob = new Blob([data.data], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = window.URL.createObjectURL(blob);
+    link.download = data.filename;
+    link.click();
+    window.URL.revokeObjectURL(link.href);
+    message.success(`已导出 ${data.count} 条订单`);
+  } catch (error) {
+    message.error('导出失败');
+    console.error('Export failed:', error);
+  }
+}
 </script>
 
 <template>
@@ -367,6 +386,7 @@ function rowClassName(record: OrderRecord) {
         <a-space>
           <a-button @click="openBatchModal">批量发货 {{ selectedCount ? `(${selectedCount})` : '' }}</a-button>
           <a-button type="primary" @click="selectedCount ? openBatchModal() : message.warning('请先选择订单')">创建发货批次</a-button>
+          <a-button @click="exportOrders">导出订单列表</a-button>
         </a-space>
       </div>
 

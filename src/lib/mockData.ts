@@ -95,3 +95,15 @@ export const valueTags = [
   'Not on Amazon',
   'Gives back'
 ];
+
+export function getBrandById(brandId: string) {
+  return mockBrands.find((brand) => brand.id === brandId);
+}
+
+export function getProductById(productId: string) {
+  return mockProducts.find((product) => product.id === productId);
+}
+
+export function getProductsByBrandId(brandId: string) {
+  return mockProducts.filter((product) => product.brandId === brandId);
+}

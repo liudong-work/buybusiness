@@ -37,12 +37,14 @@ export interface Category {
 }
 
 // 用户类型定义
-export interface User {
+export interface BuyerUser {
   id: string;
   email: string;
-  name: string;
+  contactName: string;
+  businessName: string;
   businessType: string;
-  location: string;
+  phoneNumber: string;
+  country: string;
 }
 
 // 购物车项类型定义
@@ -158,6 +160,7 @@ export interface Order {
   shipping: number;
   total: number;
   items: OrderLineItem[];
+  paypalPaymentId?: string;
 }
 
 // SEO 配置类型

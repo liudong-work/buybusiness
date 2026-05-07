@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -11,15 +11,15 @@ import {
   Package,
   ShieldCheck,
 } from 'lucide-react';
+import { createBuyerInquiry } from '@/lib/buyerApi';
+import { getStoredBuyerUser } from '@/lib/buyerAuth';
 import { getBrandById, getProductById, getProductsByBrandId } from '@/lib/mockData';
 import {
   buildInquiryLineItem,
-  createInquiryId,
   getInquirySourceLabel,
   parseInquiryItemsParam,
-  prependStoredInquiry,
 } from '@/lib/inquiries';
-import { type InquirySource } from '@/types';
+import { type BuyerUser, type InquirySource } from '@/types';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
@@ -76,6 +76,9 @@ const sourceContent: Record<
 
 export default function RequestQuotePageClient({ searchParams }: RequestQuotePageClientProps) {
   const router = useRouter();
+  const redirectQuery = new URLSearchParams(
+    Object.entries(searchParams).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+  ).toString();
   const sourceParam = searchParams.source;
   const source = validSources.includes(sourceParam as InquirySource)
     ? (sourceParam as InquirySource)
@@ -119,6 +122,7 @@ export default function RequestQuotePageClient({ searchParams }: RequestQuotePag
     return [];
   }, [brand, cartItemsParam, queriedProduct, quantityParam]);
 
+  const [buyerUser, setBuyerUser] = useState<BuyerUser | null>(null);
   const [formData, setFormData] = useState<QuoteFormState>({
     buyerName: '',
     email: '',
@@ -129,39 +133,61 @@ export default function RequestQuotePageClient({ searchParams }: RequestQuotePag
     message: '',
     needSample: false,
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    const storedBuyerUser = getStoredBuyerUser();
+    setBuyerUser(storedBuyerUser);
+    if (!storedBuyerUser) return;
+
+    setFormData((current) => ({
+      ...current,
+      buyerName: current.buyerName || storedBuyerUser.contactName,
+      email: current.email || storedBuyerUser.email,
+      company: current.company || storedBuyerUser.businessName,
+      destinationCountry: current.destinationCountry || storedBuyerUser.country,
+      role: current.role || storedBuyerUser.businessType,
+    }));
+  }, []);
 
   const itemCount = selectedItems.length;
   const totalUnits = selectedItems.reduce((sum, item) => sum + item.quantity, 0);
   const estimatedAmount = selectedItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!buyerUser) {
+      const redirect = encodeURIComponent(redirectQuery ? `/request-quote?${redirectQuery}` : '/request-quote');
+      router.push(`/login?redirect=${redirect}`);
+      return;
+    }
 
-    const inquiryId = createInquiryId();
-    const createdAt = new Date().toISOString();
-    prependStoredInquiry({
-      id: inquiryId,
-      createdAt,
-      updatedAt: createdAt,
-      status: 'submitted',
-      source,
-      buyerName: formData.buyerName,
-      email: formData.email,
-      company: formData.company,
-      role: formData.role,
-      destinationCountry: formData.destinationCountry,
-      targetPrice: formData.targetPrice,
-      needSample: formData.needSample,
-      message: formData.message,
-      brandId: brand?.id,
-      brandName: brand?.name,
-      productId: queriedProduct?.id,
-      productName: queriedProduct?.name,
-      items: selectedItems,
-      activities: [],
-    });
+    setSubmitting(true);
+    setErrorMessage('');
 
-    router.push(`/inquiries?created=${encodeURIComponent(inquiryId)}`);
+    try {
+      const inquiry = await createBuyerInquiry({
+        source,
+        buyerName: formData.buyerName,
+        company: formData.company,
+        role: formData.role,
+        destinationCountry: formData.destinationCountry,
+        targetPrice: formData.targetPrice,
+        message: formData.message,
+        needSample: formData.needSample,
+        brandId: brand?.id,
+        brandName: brand?.name,
+        productId: queriedProduct?.id,
+        productName: queriedProduct?.name,
+        items: selectedItems,
+      });
+      router.push(`/inquiries?created=${encodeURIComponent(inquiry.id)}`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '提交询盘失败，请稍后重试。');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -198,9 +224,15 @@ export default function RequestQuotePageClient({ searchParams }: RequestQuotePag
                 <p className="brand-eyebrow mb-4">Inquiry Form</p>
                 <h2 className="text-3xl font-semibold text-gray-950">提交询盘信息</h2>
                 <p className="mt-3 max-w-2xl text-gray-600 leading-7">
-                  我们先把最关键的字段收集清楚，后续就能接 CRM、邮件通知或顾问工作台，而不是停留在展示层。
+                  询盘已经接入真实后端。登录后提交的内容会直接进入买家账号和卖家后台，而不是停留在本地演示数据里。
                 </p>
               </div>
+
+              {!buyerUser ? (
+                <div className="mb-6 rounded-[1.6rem] border border-orange-100 bg-orange-50 px-5 py-4 text-sm leading-6 text-orange-800">
+                  当前需要先登录买家账号，才能把询盘提交到真实后台。登录后会自动回到当前询盘页面继续操作。
+                </div>
+              ) : null}
 
               <form className="space-y-5" onSubmit={handleSubmit}>
                 <div className="grid gap-5 md:grid-cols-2">
@@ -224,6 +256,7 @@ export default function RequestQuotePageClient({ searchParams }: RequestQuotePag
                       onChange={(event) =>
                         setFormData((current) => ({ ...current, email: event.target.value }))
                       }
+                      readOnly={Boolean(buyerUser)}
                       className="mt-2 w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 font-normal text-gray-900 outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
                       placeholder="buyer@example.com"
                       required
@@ -315,13 +348,19 @@ export default function RequestQuotePageClient({ searchParams }: RequestQuotePag
 
                 <div className="flex flex-col gap-4 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
                   <p className="max-w-xl text-sm leading-6 text-gray-500">
-                    提交后会先进入“我的询盘”列表。当前先用本地数据打通闭环，后续可继续接后台、邮件和 CRM。
+                    提交后会直接进入“我的询盘”列表，并同步出现在卖家后台的询盘管理中。
                   </p>
-                  <button className="brand-button-primary" type="submit">
-                    {sourceContent[source].primaryAction}
+                  <button className="brand-button-primary disabled:opacity-70" type="submit" disabled={submitting}>
+                    {submitting ? '提交中...' : sourceContent[source].primaryAction}
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </button>
                 </div>
+
+                {errorMessage ? (
+                  <div className="rounded-[1.4rem] border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {errorMessage}
+                  </div>
+                ) : null}
               </form>
             </div>
           </Reveal>

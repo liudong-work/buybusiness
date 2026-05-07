@@ -3,15 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ClipboardList, Clock3, MessageSquare, Package2, Scale, Send, Sparkles } from 'lucide-react';
+import { createBuyerInquiryFollowUp, fetchBuyerInquiryDetail, subscribeBuyerInquiryUpdates } from '@/lib/buyerApi';
+import { getStoredBuyerUser, subscribeBuyerAuthUpdates } from '@/lib/buyerAuth';
 import {
-  appendInquiryFollowUp,
   getInquirySourceLabel,
   getInquiryStatusMeta,
   getInquiryTimeline,
-  getStoredInquiryById,
-  subscribeInquiryUpdates,
 } from '@/lib/inquiries';
-import { type Inquiry, type InquiryActivity } from '@/types';
+import { type BuyerUser, type Inquiry, type InquiryActivity } from '@/types';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
@@ -49,15 +48,83 @@ function getActivityMeta(activity: InquiryActivity) {
 }
 
 export default function InquiryDetailPageClient({ inquiryId }: InquiryDetailPageClientProps) {
+  const [buyerUser, setBuyerUser] = useState<BuyerUser | null>(null);
   const [inquiry, setInquiry] = useState<Inquiry | null>(null);
   const [followUpMessage, setFollowUpMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    const syncInquiry = () => setInquiry(getStoredInquiryById(inquiryId) ?? null);
-    syncInquiry();
-    return subscribeInquiryUpdates(syncInquiry);
+    const loadInquiry = async () => {
+      const user = getStoredBuyerUser();
+      setBuyerUser(user);
+      if (!user) {
+        setInquiry(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage('');
+      try {
+        setInquiry(await fetchBuyerInquiryDetail(inquiryId));
+      } catch (error) {
+        setInquiry(null);
+        setErrorMessage(error instanceof Error ? error.message : '询盘详情加载失败，请稍后重试。');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadInquiry();
+
+    const unsubscribeInquiry = subscribeBuyerInquiryUpdates(loadInquiry);
+    const unsubscribeAuth = subscribeBuyerAuthUpdates(loadInquiry);
+
+    return () => {
+      unsubscribeInquiry();
+      unsubscribeAuth();
+    };
   }, [inquiryId]);
+
+  if (!buyerUser) {
+    return (
+      <div className="site-shell min-h-screen">
+        <SiteNav activePath="/inquiries" />
+        <section className="brand-section flex min-h-[70vh] items-center justify-center pt-28">
+          <div className="brand-card rounded-[2rem] p-12 text-center">
+            <ClipboardList className="mx-auto mb-5 h-8 w-8 text-orange-600" />
+            <h1 className="text-3xl font-semibold text-gray-950">请先登录买家账号</h1>
+            <p className="mx-auto mt-4 max-w-xl text-gray-600 leading-7">
+              登录后才能查看属于你的真实询盘详情和历史沟通记录。
+            </p>
+            <div className="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
+              <Link href={`/login?redirect=/inquiries/${inquiryId}`} className="brand-button-primary">
+                去登录
+              </Link>
+              <Link href={`/signup?redirect=/inquiries/${inquiryId}`} className="brand-button-secondary">
+                去注册
+              </Link>
+            </div>
+          </div>
+        </section>
+        <SiteFooter />
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="site-shell min-h-screen">
+        <SiteNav activePath="/inquiries" />
+        <section className="brand-section flex min-h-[70vh] items-center justify-center pt-28">
+          <div className="brand-card rounded-[2rem] p-12 text-center text-gray-500">正在加载询盘详情...</div>
+        </section>
+        <SiteFooter />
+      </div>
+    );
+  }
 
   if (!inquiry) {
     return (
@@ -68,7 +135,7 @@ export default function InquiryDetailPageClient({ inquiryId }: InquiryDetailPage
             <ClipboardList className="mx-auto mb-5 h-8 w-8 text-orange-600" />
             <h1 className="text-3xl font-semibold text-gray-950">询盘未找到</h1>
             <p className="mx-auto mt-4 max-w-xl text-gray-600 leading-7">
-              当前询盘可能还没有被创建，或者本地演示数据已经被清理。可以先返回询盘列表继续查看其他记录。
+              {errorMessage || '这条询盘不存在，或者当前账号没有查看权限。'}
             </p>
             <div className="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
               <Link href="/inquiries" className="brand-button-primary">
@@ -90,15 +157,22 @@ export default function InquiryDetailPageClient({ inquiryId }: InquiryDetailPage
   const latestActivity = inquiry.activities[inquiry.activities.length - 1];
   const followUpCount = inquiry.activities.filter((activity) => activity.type === 'buyer_follow_up').length;
 
-  const handleFollowUpSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleFollowUpSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!followUpMessage.trim()) return;
 
     setIsSubmitting(true);
-    appendInquiryFollowUp(inquiry.id, followUpMessage);
-    setFollowUpMessage('');
-    setIsSubmitting(false);
+    setErrorMessage('');
+    try {
+      const updatedInquiry = await createBuyerInquiryFollowUp(inquiry.id, followUpMessage);
+      setInquiry(updatedInquiry);
+      setFollowUpMessage('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '提交跟进失败，请稍后重试。');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -226,11 +300,16 @@ export default function InquiryDetailPageClient({ inquiryId }: InquiryDetailPage
                     className="w-full rounded-[1.6rem] border border-gray-200 bg-white px-4 py-3 text-gray-900 outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
                     placeholder="补充你的最新诉求，例如希望确认样品周期、包装要求、预计首单数量、目标价格区间或替代款建议。"
                   ></textarea>
+                  {errorMessage ? (
+                    <div className="rounded-[1.4rem] border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {errorMessage}
+                    </div>
+                  ) : null}
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm leading-6 text-gray-500">
-                      提交后会在本地演示数据中追加一条买家跟进记录，并自动生成一条顾问已收到的回复。
+                      提交后会直接写入真实询盘记录，并自动追加一条顾问已收到的确认回复。
                     </p>
-                    <button className="brand-button-primary" type="submit" disabled={isSubmitting}>
+                    <button className="brand-button-primary disabled:opacity-70" type="submit" disabled={isSubmitting || inquiry.status === 'closed'}>
                       提交跟进留言
                       <Send className="ml-2 h-4 w-4" />
                     </button>

@@ -27,10 +27,11 @@ const userStorageKey = 'seller-admin.user';
 export function getStoredAccessToken() {
   if (typeof window === 'undefined') return '';
   const token = window.localStorage.getItem(tokenStorageKey) ?? '';
-  if (token.startsWith('mock-token-')) {
-    const normalizedToken = token.replace('mock-token-', 'seller-admin-token-');
-    window.localStorage.setItem(tokenStorageKey, normalizedToken);
-    return normalizedToken;
+  if (!token) return '';
+  if (!token.startsWith('seller-admin-session-')) {
+    window.localStorage.removeItem(tokenStorageKey);
+    window.localStorage.removeItem(userStorageKey);
+    return '';
   }
   return token;
 }

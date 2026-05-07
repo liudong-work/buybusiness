@@ -3,8 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getCartItemCount, subscribeCartUpdates } from '@/lib/cart';
+import {
+  clearStoredBuyerSession,
+  getStoredBuyerUser,
+  subscribeBuyerAuthUpdates,
+} from '@/lib/buyerAuth';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { LanguageSwitch } from '@/components/site/LanguageSwitch';
+import type { BuyerUser } from '@/types';
 
 interface SiteNavProps {
   activePath?: string;
@@ -25,6 +31,7 @@ export function SiteNav({ activePath = '' }: SiteNavProps) {
   const isZh = language === 'zh';
   const [scrollY, setScrollY] = useState(0);
   const [cartCount, setCartCount] = useState(0);
+  const [buyerUser, setBuyerUser] = useState<BuyerUser | null>(null);
 
   useEffect(() => {
     const handleScroll = () => setScrollY(window.scrollY);
@@ -36,6 +43,12 @@ export function SiteNav({ activePath = '' }: SiteNavProps) {
     const syncCartCount = () => setCartCount(getCartItemCount());
     syncCartCount();
     return subscribeCartUpdates(syncCartCount);
+  }, []);
+
+  useEffect(() => {
+    const syncBuyerUser = () => setBuyerUser(getStoredBuyerUser());
+    syncBuyerUser();
+    return subscribeBuyerAuthUpdates(syncBuyerUser);
   }, []);
 
   return (
@@ -89,9 +102,29 @@ export function SiteNav({ activePath = '' }: SiteNavProps) {
 
             <LanguageSwitch />
 
-            <Link href="/signup-simple" className="hidden brand-button-primary px-5 py-2.5 text-sm sm:inline-flex">
-              {isZh ? '免费注册' : 'Sign Up Free'}
-            </Link>
+            {buyerUser ? (
+              <div className="hidden items-center gap-3 sm:flex">
+                <Link href="/account" className="text-sm font-semibold text-gray-700 hover:text-gray-950 transition-colors">
+                  {buyerUser.contactName}
+                </Link>
+                <button
+                  type="button"
+                  onClick={clearStoredBuyerSession}
+                  className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:border-gray-300 hover:text-gray-950"
+                >
+                  {isZh ? '退出登录' : 'Log Out'}
+                </button>
+              </div>
+            ) : (
+              <div className="hidden items-center gap-3 sm:flex">
+                <Link href="/login" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 transition hover:border-gray-300 hover:text-gray-950">
+                  {isZh ? '登录' : 'Log In'}
+                </Link>
+                <Link href="/signup" className="brand-button-primary px-5 py-2.5 text-sm">
+                  {isZh ? '免费注册' : 'Sign Up Free'}
+                </Link>
+              </div>
+            )}
           </div>
         </div>
       </div>

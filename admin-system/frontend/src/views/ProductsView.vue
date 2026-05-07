@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
-import { message } from 'ant-design-vue';
+import { message, Upload } from 'ant-design-vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore, type ProductPayload, type ProductRecord, type ProductSku } from '../stores/app';
+import { uploadImage } from '../api/client';
 
 const store = useAppStore();
 const route = useRoute();
@@ -13,6 +14,8 @@ const search = ref('');
 const drawerOpen = ref(false);
 const saving = ref(false);
 const editingProductId = ref<string | null>(null);
+const uploading = ref(false);
+const fileList = ref<any[]>([]);
 
 function createSku(seed?: Partial<ProductSku>): ProductSku {
   return {
@@ -233,6 +236,39 @@ async function removeProduct(product: ProductRecord) {
   await store.deleteProduct(product.id);
   message.success('商品已删除');
 }
+
+async function handleImageUpload(file: File): Promise<string> {
+  uploading.value = true;
+  try {
+    const result = await uploadImage(file);
+    return result.url;
+  } catch (error) {
+    message.error('图片上传失败');
+    throw error;
+  } finally {
+    uploading.value = false;
+  }
+}
+
+async function uploadCoverImage(file: File) {
+  try {
+    const url = await handleImageUpload(file);
+    formState.coverImage = url;
+    message.success('封面图上传成功');
+  } catch (error) {
+    console.error('Cover image upload failed:', error);
+  }
+}
+
+async function uploadProductImage(file: File, index: number) {
+  try {
+    const url = await handleImageUpload(file);
+    formState.images[index] = url;
+    message.success('商品图片上传成功');
+  } catch (error) {
+    console.error('Product image upload failed:', error);
+  }
+}
 </script>
 
 <template>
@@ -376,7 +412,16 @@ async function removeProduct(product: ProductRecord) {
         </a-row>
 
         <a-form-item label="封面图 URL" required>
-          <a-input v-model:value="formState.coverImage" placeholder="请输入封面图 URL" />
+          <a-space>
+            <a-input v-model:value="formState.coverImage" placeholder="请输入封面图 URL" style="flex: 1" />
+            <a-upload
+              :before-upload="uploadCoverImage"
+              :show-upload-list="false"
+              accept="image/*"
+            >
+              <a-button :loading="uploading" type="primary">上传封面图</a-button>
+            </a-upload>
+          </a-space>
         </a-form-item>
 
         <a-tabs>
@@ -415,8 +460,15 @@ async function removeProduct(product: ProductRecord) {
                 <a-button size="small" @click="addImageField">新增图片</a-button>
               </div>
               <a-space direction="vertical" style="width: 100%">
-                <div v-for="(item, index) in formState.images" :key="`image-${index}`" style="display: flex; gap: 8px">
-                  <a-input v-model:value="formState.images[index]" placeholder="请输入图片 URL" />
+                <div v-for="(item, index) in formState.images" :key="`image-${index}`" style="display: flex; gap: 8px; align-items: center">
+                  <a-input v-model:value="formState.images[index]" placeholder="请输入图片 URL" style="flex: 1" />
+                  <a-upload
+                    :before-upload="(file) => uploadProductImage(file, index)"
+                    :show-upload-list="false"
+                    accept="image/*"
+                  >
+                    <a-button :loading="uploading" type="primary">上传</a-button>
+                  </a-upload>
                   <a-button danger @click="removeImageField(index)">删除</a-button>
                 </div>
               </a-space>

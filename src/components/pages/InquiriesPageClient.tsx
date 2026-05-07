@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, ClipboardList, Clock3, MessageSquare, Package2 } from 'lucide-react';
+import { fetchBuyerInquiries, subscribeBuyerInquiryUpdates } from '@/lib/buyerApi';
+import { getStoredBuyerUser, subscribeBuyerAuthUpdates } from '@/lib/buyerAuth';
 import {
   getInquirySourceLabel,
   getInquiryStatusMeta,
-  loadStoredInquiries,
-  subscribeInquiryUpdates,
 } from '@/lib/inquiries';
-import { type Inquiry, type InquiryStatus } from '@/types';
+import { type BuyerUser, type Inquiry, type InquiryStatus } from '@/types';
 import { PageHero } from '@/components/site/PageHero';
 import { Reveal } from '@/components/site/Reveal';
 import { SiteFooter } from '@/components/site/SiteFooter';
@@ -30,13 +30,42 @@ type InquiriesPageClientProps = {
 };
 
 export default function InquiriesPageClient({ createdId }: InquiriesPageClientProps) {
+  const [buyerUser, setBuyerUser] = useState<BuyerUser | null>(null);
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [activeFilter, setActiveFilter] = useState<InquiryFilter>('all');
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    const syncInquiries = () => setInquiries(loadStoredInquiries());
-    syncInquiries();
-    return subscribeInquiryUpdates(syncInquiries);
+    const loadData = async () => {
+      const user = getStoredBuyerUser();
+      setBuyerUser(user);
+      if (!user) {
+        setInquiries([]);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setErrorMessage('');
+      try {
+        setInquiries(await fetchBuyerInquiries());
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : '询盘加载失败，请稍后重试。');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+
+    const unsubscribeInquiry = subscribeBuyerInquiryUpdates(loadData);
+    const unsubscribeAuth = subscribeBuyerAuthUpdates(loadData);
+
+    return () => {
+      unsubscribeInquiry();
+      unsubscribeAuth();
+    };
   }, []);
 
   const filteredInquiries = useMemo(() => {
@@ -78,8 +107,33 @@ export default function InquiriesPageClient({ createdId }: InquiriesPageClientPr
         {createdId ? (
           <Reveal>
             <div className="mb-6 rounded-[1.8rem] border border-emerald-100 bg-emerald-50 p-5 text-emerald-700">
-              询盘已提交成功，编号为 <span className="font-semibold">{createdId}</span>。当前为本地演示闭环，后续可直接接入真实后台与顾问分配流程。
+              询盘已提交成功，编号为 <span className="font-semibold">{createdId}</span>。这条询盘已经同步进入卖家后台，后续跟进会持续沉淀在这里。
             </div>
+          </Reveal>
+        ) : null}
+
+        {!buyerUser ? (
+          <Reveal>
+            <div className="mb-6 rounded-[1.8rem] border border-orange-100 bg-orange-50 p-6 text-orange-800">
+              <div className="text-lg font-semibold">先登录买家账号，再查看你的真实询盘记录。</div>
+              <p className="mt-2 text-sm leading-6">
+                登录后这里会展示你提交到后端的询盘，而不是浏览器本地演示数据。
+              </p>
+              <div className="mt-4 flex gap-3">
+                <Link href="/login?redirect=/inquiries" className="brand-button-primary text-sm">
+                  立即登录
+                </Link>
+                <Link href="/signup?redirect=/inquiries" className="brand-button-secondary text-sm">
+                  注册账号
+                </Link>
+              </div>
+            </div>
+          </Reveal>
+        ) : null}
+
+        {errorMessage ? (
+          <Reveal>
+            <div className="mb-6 rounded-[1.8rem] border border-red-100 bg-red-50 p-5 text-red-700">{errorMessage}</div>
           </Reveal>
         ) : null}
 
@@ -111,7 +165,11 @@ export default function InquiriesPageClient({ createdId }: InquiriesPageClientPr
         </Reveal>
 
         <div className="mt-8 space-y-5">
-          {filteredInquiries.length > 0 ? (
+          {loading ? (
+            <div className="rounded-[1.8rem] border border-dashed border-gray-200 bg-white p-10 text-center text-gray-500">
+              正在加载询盘...
+            </div>
+          ) : filteredInquiries.length > 0 ? (
             filteredInquiries.map((inquiry, index) => {
               const statusMeta = getInquiryStatusMeta(inquiry.status);
               const latestActivity = inquiry.activities[inquiry.activities.length - 1];
@@ -282,7 +340,7 @@ export default function InquiriesPageClient({ createdId }: InquiriesPageClientPr
                 </div>
                 <h2 className="text-3xl font-semibold text-gray-950">还没有询盘记录</h2>
                 <p className="mx-auto mt-4 max-w-2xl text-gray-600 leading-7">
-                  现在已经有完整的询盘闭环了。你可以从商品页、品牌页或购物车发起报价请求，再回到这里查看沉淀下来的线索。
+                  现在已经有完整的询盘闭环了。你可以从商品页、品牌页或购物车发起报价请求，再回到这里查看沉淀到后端的线索。
                 </p>
                 <div className="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
                   <Link href="/request-quote" className="brand-button-primary">
